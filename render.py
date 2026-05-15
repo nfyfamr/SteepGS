@@ -59,7 +59,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     total_time = 0.0
     for view in tqdm(fps_views, desc="FPS measurement"):
         t0 = time.time()
-        render(view, gaussians, pipeline, background, use_trained_exp=train_test_exp, separate_sh=separate_sh)
+        render(view, gaussians, pipeline, background)["render"]
         torch.cuda.synchronize()
         total_time += time.time() - t0
 
@@ -143,7 +143,7 @@ if __name__ == "__main__":
     if os.path.exists(run_id_path):
         with open(run_id_path) as f:
             run_id = f.read().strip()
-        wandb_run = wandb.init(project="AdpSplit-benchmark", id=run_id, resume="allow")
+        wandb_run = wandb.init(project="SteepGS", id=run_id, resume="allow")
 
     render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.skip_save, wandb_run)
     
