@@ -265,12 +265,17 @@ __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
+	const uint32_t* __restrict__ per_tile_bucket_offset,
+	uint32_t* __restrict__ bucket_to_tile,
+	float* __restrict__ sampled_T,
+	float* __restrict__ sampled_ar,
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
+	uint32_t* __restrict__ max_contrib,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color)
 {
@@ -289,9 +294,21 @@ renderCUDA(
 	bool done = !inside;
 
 	// Load start/end range of IDs to process in bit sorted list.
-	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
+	uint32_t tile_id = block.group_index().y * horizontal_blocks + block.group_index().x;
+	uint2 range = ranges[tile_id];
 	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
 	int toDo = range.y - range.x;
+
+	// The accelerated backward pass works bucket-by-bucket, where one
+	// bucket is a 32-splat chunk in a tile. Save the tile mapping here.
+	uint32_t bucket_base = tile_id == 0 ? 0 : per_tile_bucket_offset[tile_id - 1];
+	const int num_buckets = (toDo + 31) / 32;
+	for (int i = 0; i < (num_buckets + BLOCK_SIZE - 1) / BLOCK_SIZE; ++i)
+	{
+		int bucket_idx = i * BLOCK_SIZE + block.thread_rank();
+		if (bucket_idx < num_buckets)
+			bucket_to_tile[bucket_base + bucket_idx] = tile_id;
+	}
 
 	// Allocate storage for batches of collectively fetched data.
 	__shared__ int collected_id[BLOCK_SIZE];
@@ -326,6 +343,14 @@ renderCUDA(
 		// Iterate over current batch
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
 		{
+			if (j % 32 == 0)
+			{
+				sampled_T[bucket_base * BLOCK_SIZE + block.thread_rank()] = T;
+				for (int ch = 0; ch < CHANNELS; ++ch)
+					sampled_ar[bucket_base * BLOCK_SIZE * CHANNELS + ch * BLOCK_SIZE + block.thread_rank()] = C[ch];
+				++bucket_base;
+			}
+
 			// Keep track of current position in range
 			contributor++;
 
@@ -373,30 +398,52 @@ renderCUDA(
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 	}
+
+	__shared__ uint32_t contributor_max[BLOCK_SIZE];
+	contributor_max[block.thread_rank()] = last_contributor;
+	block.sync();
+	for (uint32_t stride = BLOCK_SIZE / 2; stride > 0; stride >>= 1)
+	{
+		if (block.thread_rank() < stride)
+			contributor_max[block.thread_rank()] = max(contributor_max[block.thread_rank()], contributor_max[block.thread_rank() + stride]);
+		block.sync();
+	}
+	if (block.thread_rank() == 0)
+		max_contrib[tile_id] = contributor_max[0];
 }
 
 void FORWARD::render(
 	const dim3 grid, dim3 block,
 	const uint2* ranges,
 	const uint32_t* point_list,
+	const uint32_t* per_tile_bucket_offset,
+	uint32_t* bucket_to_tile,
+	float* sampled_T,
+	float* sampled_ar,
 	int W, int H,
 	const float2* means2D,
 	const float* colors,
 	const float4* conic_opacity,
 	float* final_T,
 	uint32_t* n_contrib,
+	uint32_t* max_contrib,
 	const float* bg_color,
 	float* out_color)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
+		per_tile_bucket_offset,
+		bucket_to_tile,
+		sampled_T,
+		sampled_ar,
 		W, H,
 		means2D,
 		colors,
 		conic_opacity,
 		final_T,
 		n_contrib,
+		max_contrib,
 		bg_color,
 		out_color);
 }
