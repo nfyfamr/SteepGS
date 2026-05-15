@@ -31,6 +31,12 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+try:
+    from fused_ssim import fused_ssim
+    FUSED_SSIM_AVAILABLE = True
+except:
+    FUSED_SSIM_AVAILABLE = False
+
 def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_iterations, checkpoint_iterations, vis_iterations, checkpoint, debug_from, wandb=None):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -105,7 +111,11 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        if FUSED_SSIM_AVAILABLE:
+            ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
+        else:
+            ssim_value = ssim(image, gt_image)
+        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
         loss.backward()
 
         iter_end.record()
