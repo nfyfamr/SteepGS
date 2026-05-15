@@ -97,6 +97,9 @@ class OptimizationParams(ParamGroup):
         self.xyz_grad_estimator = "mean"
         self.xyz_grad_ema_ratio = 0.5
         self.random_background = False
+
+        self.highfeature_lr = 0.005
+        self.optimizer_type = "default"
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

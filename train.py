@@ -226,8 +226,7 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
 
             # Optimizer step
             if iteration < opt.iterations:
-                gaussians.optimizer.step()
-                gaussians.optimizer.zero_grad(set_to_none = True)
+                gaussians.optimizer_step(iteration)
 
             # record time
             optim_end.record()
