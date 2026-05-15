@@ -100,6 +100,7 @@ class OptimizationParams(ParamGroup):
 
         self.highfeature_lr = 0.005
         self.optimizer_type = "default"
+        self.mult = 0.5
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

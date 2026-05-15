@@ -37,7 +37,7 @@ from utils.general_utils import safe_state
 import time
 import wandb
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background, skip_save=False, wandb_run=None):
+def render_set(model_path, name, iteration, views, gaussians, pipeline, background, args, skip_save=False, wandb_run=None):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
 
@@ -45,7 +45,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     makedirs(gts_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        rendering = render(view, gaussians, pipeline, background)["render"]
+        rendering = render(view, gaussians, pipeline, background, args.mult)["render"]
         if not skip_save:
             gt = view.original_image[0:3, :, :]
             torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
@@ -59,7 +59,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     total_time = 0.0
     for view in tqdm(fps_views, desc="FPS measurement"):
         t0 = time.time()
-        render(view, gaussians, pipeline, background)["render"]
+        render(view, gaussians, pipeline, background, args.mult)["render"]
         torch.cuda.synchronize()
         total_time += time.time() - t0
 
@@ -71,7 +71,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     if wandb_run:
         wandb_run.log({f"{name}/fps": fps, f"{name}/fps_num_rendered": num_frames})
 
-def render_video(source_path, model_path, iteration, views, gaussians, pipeline, background, fps=30):
+def render_video(source_path, model_path, iteration, views, gaussians, pipeline, background, args):
     render_path = os.path.join(model_path, 'video', "ours_{}".format(iteration))
     makedirs(render_path, exist_ok=True)
     view = copy.deepcopy(views[0])
@@ -83,13 +83,13 @@ def render_video(source_path, model_path, iteration, views, gaussians, pipeline,
 
     size = (view.original_image.shape[2], view.original_image.shape[1])
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    final_video = cv2.VideoWriter(os.path.join(model_path, 'final_video.mp4'), fourcc, fps, size)
+    final_video = cv2.VideoWriter(os.path.join(model_path, 'final_video.mp4'), fourcc, args.fps, size)
 
     for idx, pose in enumerate(tqdm(render_poses, desc="Rendering progress")):
         view.world_view_transform = torch.tensor(getWorld2View2(pose[:3, :3].T, pose[:3, 3], view.trans, view.scale)).transpose(0, 1).cuda()
         view.full_proj_transform = (view.world_view_transform.unsqueeze(0).bmm(view.projection_matrix.unsqueeze(0))).squeeze(0)
         view.camera_center = view.world_view_transform.inverse()[3, :3]
-        rendering = render(view, gaussians, pipeline, background)
+        rendering = render(view, gaussians, pipeline, background, args.mult)
 
         img = torch.clamp(rendering["render"], min=0., max=1.)
         torchvision.utils.save_image(img, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
@@ -98,7 +98,7 @@ def render_video(source_path, model_path, iteration, views, gaussians, pipeline,
 
     final_video.release()
 
-def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, skip_save: bool, wandb_run=None):
+def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, skip_save: bool, args, wandb_run=None):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
@@ -110,13 +110,13 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         if args.video:
             render_video(dataset.source_path, dataset.model_path, scene.loaded_iter, scene.getTestCameras(),
-                         gaussians, pipeline, background, args.fps)
+                         gaussians, pipeline, background, args)
 
         if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, skip_save=skip_save, wandb_run=wandb_run)
+             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, args, skip_save=skip_save, wandb_run=wandb_run)
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, skip_save=skip_save, wandb_run=wandb_run)
+             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, args, skip_save=skip_save, wandb_run=wandb_run)
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -129,6 +129,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip_save", action="store_true")
     parser.add_argument("--video", action="store_true")
     parser.add_argument("--fps", default=30, type=int)
+    parser.add_argument("--mult", default=0.5, type=float)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--camera_path", default='', type=str)
     args = get_combined_args(parser)
@@ -145,7 +146,7 @@ if __name__ == "__main__":
             run_id = f.read().strip()
         wandb_run = wandb.init(project="SteepGS", id=run_id, resume="allow")
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.skip_save, wandb_run)
+    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.skip_save, args, wandb_run)
     
     if wandb_run:
         wandb_run.finish()

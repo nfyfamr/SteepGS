@@ -36,6 +36,7 @@ RasterizeGaussiansCUDA(
 	const torch::Tensor& sh,
 	const int degree,
 	const torch::Tensor& campos,
+	const float mult,
 	const bool prefiltered,
 	const bool debug);
 

@@ -71,7 +71,7 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
                     net_image_bytes = None
                     custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
                     if custom_cam != None:
-                        net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
+                        net_image = render(custom_cam, gaussians, pipe, background, opt.mult, scaling_modifer)["render"]
                         net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                     network_gui.send(net_image_bytes, dataset.source_path)
                     if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
@@ -99,7 +99,7 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, opt.mult)
         image, viewspace_point_tensor, splitting_mats, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["splitting_matrices"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
@@ -173,7 +173,7 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
                                 view.world_view_transform = torch.tensor(getWorld2View2(pose[:3, :3].T, pose[:3, 3], view.trans, view.scale)).transpose(0, 1).cuda()
                                 view.full_proj_transform = (view.world_view_transform.unsqueeze(0).bmm(view.projection_matrix.unsqueeze(0))).squeeze(0)
                                 view.camera_center = view.world_view_transform.inverse()[3, :3]
-                                rendering = render(view, gaussians, pipe, bg, override_color=color)
+                                rendering = render(view, gaussians, pipe, bg, opt.mult, override_color=color)
 
                                 img = torch.clamp(rendering["render"], min=0., max=1.)
                                 torchvision.utils.save_image(img, os.path.join(render_path, f'{idx:05d}_{k}_{num}' + ".png"))
@@ -190,7 +190,7 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
                             view.world_view_transform = torch.tensor(getWorld2View2(pose[:3, :3].T, pose[:3, 3], view.trans, view.scale)).transpose(0, 1).cuda()
                             view.full_proj_transform = (view.world_view_transform.unsqueeze(0).bmm(view.projection_matrix.unsqueeze(0))).squeeze(0)
                             view.camera_center = view.world_view_transform.inverse()[3, :3]
-                            render_pkg = render(view, gaussians, pipe, bg)
+                            render_pkg = render(view, gaussians, pipe, bg, opt.mult)
                             image = torch.clamp(render_pkg["render"], 0.0, 1.0)
                             torchvision.utils.save_image(image, os.path.join(render_path, f'{idx:05d}_rgb.png'))
                             video_img = (image.permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)[..., ::-1]

@@ -71,12 +71,14 @@ __global__ void checkFrustum(int P,
 // Run once per Gaussian (1:N mapping).
 __global__ void duplicateWithKeys(
 	int P,
+	const float mult,
 	const float2* points_xy,
 	const float* depths,
 	const uint32_t* offsets,
 	uint64_t* gaussian_keys_unsorted,
 	uint32_t* gaussian_values_unsorted,
-	int* radii,
+	float4* con_o,
+	uint32_t* tiles_touched,
 	dim3 grid)
 {
 	auto idx = cg::this_grid().thread_rank();
@@ -84,31 +86,15 @@ __global__ void duplicateWithKeys(
 		return;
 
 	// Generate no key/value pair for invisible Gaussians
-	if (radii[idx] > 0)
+	if (tiles_touched[idx] > 0)
 	{
 		// Find this Gaussian's offset in buffer for writing keys/values.
 		uint32_t off = (idx == 0) ? 0 : offsets[idx - 1];
-		uint2 rect_min, rect_max;
-
-		getRect(points_xy[idx], radii[idx], rect_min, rect_max, grid);
-
-		// For each tile that the bounding rect overlaps, emit a
-		// key/value pair. The key is |  tile ID  |      depth      |,
-		// and the value is the ID of the Gaussian. Sorting the values
-		// with this key yields Gaussian IDs in a list, such that they
-		// are first sorted by tile and then by depth.
-		for (int y = rect_min.y; y < rect_max.y; y++)
-		{
-			for (int x = rect_min.x; x < rect_max.x; x++)
-			{
-				uint64_t key = y * grid.x + x;
-				key <<= 32;
-				key |= *((uint32_t*)&depths[idx]);
-				gaussian_keys_unsorted[off] = key;
-				gaussian_values_unsorted[off] = idx;
-				off++;
-			}
-		}
+		duplicateToTilesTouched(
+			points_xy[idx], con_o[idx], grid, mult,
+			idx, off, depths[idx],
+			gaussian_keys_unsorted,
+			gaussian_values_unsorted);
 	}
 }
 
@@ -242,6 +228,7 @@ std::tuple<int, int> CudaRasterizer::Rasterizer::forward(
 	const float* viewmatrix,
 	const float* projmatrix,
 	const float* cam_pos,
+	const float mult,
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
 	float* out_color,
@@ -287,6 +274,7 @@ std::tuple<int, int> CudaRasterizer::Rasterizer::forward(
 		colors_precomp,
 		viewmatrix, projmatrix,
 		(glm::vec3*)cam_pos,
+		mult,
 		width, height,
 		focal_x, focal_y,
 		tan_fovx, tan_fovy,
@@ -317,12 +305,14 @@ std::tuple<int, int> CudaRasterizer::Rasterizer::forward(
 	// and corresponding dublicated Gaussian indices to be sorted
 	duplicateWithKeys << <(P + 255) / 256, 256 >> > (
 		P,
+		mult,
 		geomState.means2D,
 		geomState.depths,
 		geomState.point_offsets,
 		binningState.point_list_keys_unsorted,
 		binningState.point_list_unsorted,
-		radii,
+		geomState.conic_opacity,
+		geomState.tiles_touched,
 		tile_grid)
 	CHECK_CUDA(, debug)
 

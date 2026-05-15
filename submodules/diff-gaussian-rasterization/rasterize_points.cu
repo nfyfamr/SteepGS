@@ -53,6 +53,7 @@ RasterizeGaussiansCUDA(
 	const torch::Tensor& sh,
 	const int degree,
 	const torch::Tensor& campos,
+	const float mult,
 	const bool prefiltered,
 	const bool debug)
 {
@@ -110,6 +111,7 @@ RasterizeGaussiansCUDA(
 		viewmatrix.contiguous().data<float>(),
 		projmatrix.contiguous().data<float>(),
 		campos.contiguous().data<float>(),
+		mult,
 		tan_fovx,
 		tan_fovy,
 		prefiltered,

@@ -168,6 +168,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const glm::vec3* cam_pos,
+	const float mult,
 	const int W, int H,
 	const float tan_fovx, float tan_fovy,
 	const float focal_x, float focal_y,
@@ -233,9 +234,10 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float lambda2 = mid - sqrt(max(0.1f, mid * mid - det));
 	float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
 	float2 point_image = { ndc2Pix(p_proj.x, W), ndc2Pix(p_proj.y, H) };
-	uint2 rect_min, rect_max;
-	getRect(point_image, my_radius, rect_min, rect_max, grid);
-	if ((rect_max.x - rect_min.x) * (rect_max.y - rect_min.y) == 0)
+
+	float4 con_o = { conic.x, conic.y, conic.z, opacities[idx] };
+	uint32_t tiles_count = duplicateToTilesTouched(point_image, con_o, grid, mult, 0, 0, 0, nullptr, nullptr);
+	if (tiles_count == 0)
 		return;
 
 	// If colors have been precomputed, use them, otherwise convert
@@ -253,8 +255,8 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	radii[idx] = my_radius;
 	points_xy_image[idx] = point_image;
 	// Inverse 2D covariance and opacity neatly pack into one float4
-	conic_opacity[idx] = { conic.x, conic.y, conic.z, opacities[idx] };
-	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
+	conic_opacity[idx] = con_o;
+	tiles_touched[idx] = tiles_count;
 }
 
 // Main rasterization method. Collaboratively works on one tile per
@@ -461,6 +463,7 @@ void FORWARD::preprocess(int P, int D, int M,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const glm::vec3* cam_pos,
+	const float mult,
 	const int W, int H,
 	const float focal_x, float focal_y,
 	const float tan_fovx, float tan_fovy,
@@ -488,6 +491,7 @@ void FORWARD::preprocess(int P, int D, int M,
 		viewmatrix, 
 		projmatrix,
 		cam_pos,
+		mult,
 		W, H,
 		tan_fovx, tan_fovy,
 		focal_x, focal_y,
