@@ -500,14 +500,22 @@ class GaussianModel:
             num_split_points = out_dict['num_split_points']
             num_stationary_points = out_dict['num_stationary_points']
             num_saddle_points = out_dict['num_saddle_points']
+            split_candidate = out_dict['split_candidate']
+            clone_candidate = out_dict['clone_candidate']
 
         else:
             raise ValueError(f'Unknown densification strategy: {densify_strategy}')
 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
+        prune_mask_low_op = prune_mask.sum().item()
+        prune_mask_big_vs = prune_mask_big_ws = 0
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+
+            prune_mask_big_vs = big_points_vs.sum().item()
+            prune_mask_big_ws = big_points_ws.sum().item()
+
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
         self.prune_points(prune_mask)
 
@@ -524,6 +532,11 @@ class GaussianModel:
             num_stationary_points=num_stationary_points,
             num_saddle_points=num_saddle_points,
             num_pruned_points=num_pruned_points,
+            prune_mask_low_op=prune_mask_low_op,
+            prune_mask_big_vs=prune_mask_big_vs,
+            prune_mask_big_ws=prune_mask_big_ws,
+            split_candidate=split_candidate,
+            clone_candidate=clone_candidate,
         )
 
     
@@ -542,8 +555,8 @@ class GaussianModel:
 
         optimized_pts_mask = self.denom[..., 0] >= 1
         stationary_pts_mask = torch.logical_and(grad_norms <= grad_threshold, optimized_pts_mask)
-        uncertain_pts_mask = (viewspace_grad_norms.squeeze(-1) >= grad_var_threshold)
-        saddle_pts_mask = torch.logical_and(stationary_pts_mask, S_eigvals < S_threshold)
+        uncertain_pts_mask = (viewspace_grad_norms.squeeze(-1) >= grad_var_threshold)  # Basic ADC filter
+        saddle_pts_mask = torch.logical_and(stationary_pts_mask, S_eigvals < S_threshold)  # SteepGS filter
 
 
         filters = []
@@ -556,12 +569,13 @@ class GaussianModel:
     
         selected_pts_mask = filters[0]
         for mask in filters[1:]:
-            selected_pts_mask = torch.logical_and(selected_pts_mask, mask)
+            selected_pts_mask = torch.logical_and(selected_pts_mask, mask)  # Basic ADC filter & S_eigvals < S_threshold
 
         if hasattr(self, 'visualize_densify_hook') and self.visualize_densify_hook is not None:
             self.visualize_densify_hook({'selected': selected_pts_mask})
 
 
+        split_candidate = torch.logical_and(uncertain_pts_mask, torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
         split_pts_mask = torch.logical_and(selected_pts_mask, torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
 
         if 'no_eig_upd' in options:
@@ -587,6 +601,7 @@ class GaussianModel:
             offsets_split[1::2, ...] = offsets_split[1::2, ...] * length[1::2, ...] * -1.
 
         
+        clone_candidate = torch.logical_and(uncertain_pts_mask, torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         clone_pts_mask = torch.logical_and(selected_pts_mask, torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         if 'no_eig_upd' in options:
             offsets_clone = torch.zeros_like(S_eigvecs[clone_pts_mask])
@@ -640,7 +655,9 @@ class GaussianModel:
             num_stationary_points=stationary_pts_mask.sum().item(),
             num_saddle_points=saddle_pts_mask.sum().item(),
             num_uncertain_points=uncertain_pts_mask.sum().item(),
-            num_optimized_points = optimized_pts_mask.sum().item()
+            num_optimized_points=optimized_pts_mask.sum().item(),
+            split_candidate=split_candidate.sum().item(),
+            clone_candidate=clone_candidate.sum().item(),
         )
 
     def add_densification_stats(self, viewspace_point_tensor, splitting_mats, update_filter):

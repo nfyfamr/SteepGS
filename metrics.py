@@ -22,6 +22,7 @@ import json
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser
+import wandb
 
 def readImages(renders_dir, gt_dir):
     renders = []
@@ -35,7 +36,7 @@ def readImages(renders_dir, gt_dir):
         image_names.append(fname)
     return renders, gts, image_names
 
-def evaluate(model_paths):
+def evaluate(model_paths, wandb_run=None):
 
     full_dict = {}
     per_view_dict = {}
@@ -83,6 +84,12 @@ def evaluate(model_paths):
                 full_dict[scene_dir][method].update({"SSIM": torch.tensor(ssims).mean().item(),
                                                         "PSNR": torch.tensor(psnrs).mean().item(),
                                                         "LPIPS": torch.tensor(lpipss).mean().item()})
+                if wandb_run:
+                    wandb_run.log({
+                        f"test/SSIM": torch.tensor(ssims).mean().item(),
+                        f"test/PSNR": torch.tensor(psnrs).mean().item(),
+                        f"test/LPIPS": torch.tensor(lpipss).mean().item(),
+                    })
                 per_view_dict[scene_dir][method].update({"SSIM": {name: ssim for ssim, name in zip(torch.tensor(ssims).tolist(), image_names)},
                                                             "PSNR": {name: psnr for psnr, name in zip(torch.tensor(psnrs).tolist(), image_names)},
                                                             "LPIPS": {name: lp for lp, name in zip(torch.tensor(lpipss).tolist(), image_names)}})
@@ -103,4 +110,18 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Training script parameters")
     parser.add_argument('--model_paths', '-m', required=True, nargs="+", type=str, default=[])
     args = parser.parse_args()
-    evaluate(args.model_paths)
+
+    # Resume the wandb run created during training, if available
+    wandb_run = None
+    for model_path in args.model_paths:
+        run_id_path = os.path.join(model_path, "wandb_run_id.txt")
+        if os.path.exists(run_id_path):
+            with open(run_id_path) as f:
+                run_id = f.read().strip()
+            wandb_run = wandb.init(project="SteepGS", id=run_id, resume="allow")
+            break
+
+    evaluate(args.model_paths, wandb_run)
+
+    if wandb_run:
+        wandb_run.finish()

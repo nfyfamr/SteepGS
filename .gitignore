@@ -11,3 +11,5 @@ submodules/simple-knn/dist/*
 submodules/simple-knn/simple_knn.egg-info/*
 tensorboard_3d
 screenshots
+data
+wandb

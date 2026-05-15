@@ -34,8 +34,10 @@ from utils.graphics_utils import getWorld2View2
 from utils.pose_utils import generate_ellipse_path, generate_spiral_path
 from utils.general_utils import vis_depth
 from utils.general_utils import safe_state
+import time
+import wandb
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background, skip_save=False):
+def render_set(model_path, name, iteration, views, gaussians, pipeline, background, skip_save=False, wandb_run=None):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
 
@@ -48,6 +50,26 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             gt = view.original_image[0:3, :, :]
             torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
             torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+
+    fps_views = list(views)
+    if len(fps_views) < 100:
+        factor = (100 + len(fps_views) - 1) // len(fps_views)
+        fps_views = (fps_views * factor)[:100]
+
+    total_time = 0.0
+    for view in tqdm(fps_views, desc="FPS measurement"):
+        t0 = time.time()
+        render(view, gaussians, pipeline, background, use_trained_exp=train_test_exp, separate_sh=separate_sh)
+        torch.cuda.synchronize()
+        total_time += time.time() - t0
+
+    num_frames = len(fps_views)
+    avg_time = total_time / num_frames if num_frames > 0 else 0
+    fps = 1.0 / avg_time if avg_time > 0 else 0
+    print(f"[{name}] Rendered {num_frames} frames in {total_time:.2f} seconds. Average FPS: {fps:.2f}")
+
+    if wandb_run:
+        wandb_run.log({f"{name}/fps": fps, f"{name}/fps_num_rendered": num_frames})
 
 def render_video(source_path, model_path, iteration, views, gaussians, pipeline, background, fps=30):
     render_path = os.path.join(model_path, 'video', "ours_{}".format(iteration))
@@ -76,7 +98,7 @@ def render_video(source_path, model_path, iteration, views, gaussians, pipeline,
 
     final_video.release()
 
-def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, skip_save: bool):
+def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, skip_save: bool, wandb_run=None):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
         scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
@@ -91,10 +113,10 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
                          gaussians, pipeline, background, args.fps)
 
         if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, skip_save=skip_save)
+             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, skip_save=skip_save, wandb_run=wandb_run)
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, skip_save=skip_save)
+             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, skip_save=skip_save, wandb_run=wandb_run)
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -115,4 +137,15 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.skip_save)
+    # Resume the wandb run created during training, if available
+    wandb_run = None
+    run_id_path = os.path.join(args.model_path, "wandb_run_id.txt")
+    if os.path.exists(run_id_path):
+        with open(run_id_path) as f:
+            run_id = f.read().strip()
+        wandb_run = wandb.init(project="AdpSplit-benchmark", id=run_id, resume="allow")
+
+    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.skip_save, wandb_run)
+    
+    if wandb_run:
+        wandb_run.finish()

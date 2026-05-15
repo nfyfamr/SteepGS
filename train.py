@@ -24,13 +24,14 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import wandb
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_iterations, checkpoint_iterations, vis_iterations, checkpoint, debug_from):
+def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_iterations, checkpoint_iterations, vis_iterations, checkpoint, debug_from, wandb=None):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -46,6 +47,15 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    # record time
+    optim_start = torch.cuda.Event(enable_timing=True)
+    optim_end = torch.cuda.Event(enable_timing=True)
+    total_time = 0.0
+    iter_time_sum = 0.0
+    optim_time_sum = 0.0
+    rendered_gauss_sum = 0
+    mem_peak_max_gb = 0.0
+    
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
@@ -69,6 +79,7 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
                 except Exception as e:
                     network_gui.conn = None
 
+        torch.cuda.reset_peak_memory_stats()
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
@@ -108,11 +119,15 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
             if iteration == opt.iterations:
                 progress_bar.close()
 
+            report_set = {}
+
             # Log and save
             training_report(dataset, tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), logging_intervals, testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+
+            optim_start.record()
 
             # Densification
             if iteration < opt.densify_until_iter: # or gaussians.get_xyz.shape[0] < 6000000:
@@ -189,6 +204,22 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     densify_info = gaussians.densify_and_prune(opt.densify_strategy, opt.densify_grad_threshold, opt.densify_S_threshold, 0.005, scene.cameras_extent, size_threshold)
                     write_dict_log(dataset, {'iteration': iteration, **densify_info})
+                    report_set.update({
+                        "clone_candidate": densify_info["clone_candidate"],
+                        "split_candidate": densify_info["split_candidate"],
+                        "clone": densify_info["num_clone_points"],
+                        "split": densify_info["num_split_points"],
+                        "prune_mask_low_op": densify_info["prune_mask_low_op"],
+                        "prune_mask_big_vs": densify_info["prune_mask_big_vs"],
+                        "prune_mask_big_ws": densify_info["prune_mask_big_ws"],
+                        "prune_mask": densify_info["num_pruned_points"],
+                        "prune": densify_info["num_pruned_points"],
+                        # densify_info["num_added_points"],
+                        # densify_info["num_stationary_points"],
+                        # densify_info["num_saddle_points"],
+                        # densify_info["num_uncertain_points"],
+                        # densify_info["num_optimized_points"],
+                    })
 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
@@ -198,10 +229,48 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
+            # record time
+            optim_end.record()
+            torch.cuda.synchronize()
+            iter_time = iter_start.elapsed_time(iter_end)
+            optim_time = optim_start.elapsed_time(optim_end)
+            iter_time_sum += iter_time / 1e3
+            optim_time_sum += optim_time / 1e3
+            total_time += (iter_time + optim_time) / 1e3
+
+            n_rendered = int((radii > 0).sum().item())
+            rendered_gauss_sum += n_rendered
+            cur_iter = iteration - first_iter + 1
+
+            mem_peak_max_gb = max(mem_peak_max_gb, torch.cuda.max_memory_allocated())
+            report_set.update({
+                "ema_loss": ema_loss_for_log,
+                "time/iter": iter_time,
+                "time/optim": optim_time,
+                "time/total": total_time,
+                "time/iter_sum": iter_time_sum,
+                "time/optim_sum": optim_time_sum,
+                "gauss/total": gaussians.get_xyz.shape[0],
+                "gauss/rendered": n_rendered,
+                "gauss/rendered_avg": rendered_gauss_sum / cur_iter,
+                "mem_peak_gb": torch.cuda.max_memory_allocated() / 1024**3,
+                "mem_peak_max_gb": mem_peak_max_gb / 1024**3,
+            })
+
+            if wandb:
+                wandb.log(report_set, step=iteration)
+
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
+    # scene.save(iteration)
+    print(f"Gaussian number: {gaussians._xyz.shape[0]}")
+    print(f"Training time: {total_time}")
+
+    if wandb:
+        wandb.finish()
+    
 def prepare_output_and_logger(args):    
     if not args.model_path:
         if os.getenv('OAR_JOB_ID'):
@@ -298,7 +367,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--logging_intervals", type=int, default=100)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--vis_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--quiet", action="store_true")
@@ -306,7 +375,13 @@ if __name__ == "__main__":
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
-    
+
+    wandb.init(project="SteepGS", config=vars(args), name='-'.join(args.model_path.split('/')) if args.model_path else None)
+    if not wandb.run.disabled:
+        os.makedirs(args.model_path, exist_ok=True)
+        with open(os.path.join(args.model_path, "wandb_run_id.txt"), 'w') as f:
+            f.write(wandb.run.id)
+
     print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
@@ -317,7 +392,7 @@ if __name__ == "__main__":
     if not network_gui.disabled:
         network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.logging_intervals, args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.vis_iterations, args.start_checkpoint, args.debug_from)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.logging_intervals, args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.vis_iterations, args.start_checkpoint, args.debug_from, wandb=wandb)
 
     # All done
     print("\nTraining complete.")

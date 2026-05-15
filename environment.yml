@@ -1,0 +1,33 @@
+name: SteepGS
+channels:
+  - nvidia/label/cuda-11.6.2
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.7.13
+  - pip=22.3.1
+  - cuda-toolkit=11.6.2
+  - cudatoolkit=11.6
+  - mkl<2024.1
+  - plyfile
+  - tqdm
+  - pytorch=1.12.1
+  - torchvision=0.13.1
+  - torchaudio=0.12.1
+  - pip:
+    # - --extra-index-url https://download.pytorch.org/whl/cu124
+    # - torch==2.6.0
+    # - torchvision==0.21.0
+    # - torchaudio==2.6.0
+    # - cupy-cuda12x
+    # - cucim
+    - wandb
+    # - scipy
+    # - kornia
+    # - matplotlib
+    # - submodules/diff-gaussian-rasterization
+    # - submodules/simple-knn
+    # - submodules/fused-ssim
+    - opencv-python
+    - joblib
