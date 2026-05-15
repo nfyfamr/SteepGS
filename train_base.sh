@@ -1,16 +1,16 @@
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/bicycle -m output/SteepGS/mipnerf360/bicycle --eval --no_gui --densify_strategy steepest
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/flowers -m output/SteepGS/mipnerf360/flowers --eval --no_gui --densify_strategy steepest
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/garden -m output/SteepGS/mipnerf360/garden --eval --no_gui --densify_strategy steepest
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/stump -m output/SteepGS/mipnerf360/stump --eval --no_gui --densify_strategy steepest
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/treehill -m output/SteepGS/mipnerf360/treehill --eval --no_gui --densify_strategy steepest
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/room -m output/SteepGS/mipnerf360/room --eval --no_gui --densify_strategy steepest
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/counter -m output/SteepGS/mipnerf360/counter --eval --no_gui --densify_strategy steepest
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/kitchen -m output/SteepGS/mipnerf360/kitchen --eval --no_gui --densify_strategy steepest
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/bonsai -m output/SteepGS/mipnerf360/bonsai --eval --no_gui --densify_strategy steepest
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/tandt/truck -m output/SteepGS/tandt/truck --eval --no_gui --densify_strategy steepest --mult 0.7
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/tandt/train -m output/SteepGS/tandt/train --eval --no_gui --densify_strategy steepest --mult 0.7
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/db/playroom -m output/SteepGS/db/playroom --eval --no_gui --densify_strategy steepest --mult 0.7
-WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/db/drjohnson -m output/SteepGS/db/drjohnson --eval --no_gui --densify_strategy steepest --mult 0.7
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/bicycle -m output/SteepGS/mipnerf360/bicycle --eval --no_gui --densify_strategy steepest --optimizer_type sparse
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/flowers -m output/SteepGS/mipnerf360/flowers --eval --no_gui --densify_strategy steepest --optimizer_type sparse
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/garden -m output/SteepGS/mipnerf360/garden --eval --no_gui --densify_strategy steepest --optimizer_type sparse --highfeature_lr 0.02
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/stump -m output/SteepGS/mipnerf360/stump --eval --no_gui --densify_strategy steepest --optimizer_type sparse
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/treehill -m output/SteepGS/mipnerf360/treehill --eval --no_gui --densify_strategy steepest --optimizer_type sparse
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/room -m output/SteepGS/mipnerf360/room --eval --no_gui --densify_strategy steepest --optimizer_type sparse --highfeature_lr 0.02
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/counter -m output/SteepGS/mipnerf360/counter --eval --no_gui --densify_strategy steepest --optimizer_type sparse --highfeature_lr 0.02
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/kitchen -m output/SteepGS/mipnerf360/kitchen --eval --no_gui --densify_strategy steepest --optimizer_type sparse --highfeature_lr 0.02
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/mipnerf360/bonsai -m output/SteepGS/mipnerf360/bonsai --eval --no_gui --densify_strategy steepest --optimizer_type sparse --highfeature_lr 0.02
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/tandt/truck -m output/SteepGS/tandt/truck --eval --no_gui --densify_strategy steepest --mult 0.7 --optimizer_type sparse --highfeature_lr 0.04
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/tandt/train -m output/SteepGS/tandt/train --eval --no_gui --densify_strategy steepest --mult 0.7 --optimizer_type sparse --highfeature_lr 0.042
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/db/playroom -m output/SteepGS/db/playroom --eval --no_gui --densify_strategy steepest --mult 0.7 --optimizer_type sparse --highfeature_lr 0.0015
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES=1 python train.py -s ./data/db/drjohnson -m output/SteepGS/db/drjohnson --eval --no_gui --densify_strategy steepest --mult 0.7 --optimizer_type sparse --highfeature_lr 0.0025
 
 CUDA_VISIBLE_DEVICES=1 python render.py -m output/SteepGS/mipnerf360/bicycle --skip_train
 CUDA_VISIBLE_DEVICES=1 python render.py -m output/SteepGS/mipnerf360/flowers --skip_train
