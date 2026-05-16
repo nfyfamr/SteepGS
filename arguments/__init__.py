@@ -84,7 +84,7 @@ class OptimizationParams(ParamGroup):
         self.opacity_lr = 0.025
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
-        self.percent_dense = 0.01
+        self.percent_dense = 0.001
         self.lambda_dssim = 0.2
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
@@ -99,6 +99,7 @@ class OptimizationParams(ParamGroup):
         self.random_background = False
 
         self.highfeature_lr = 0.005
+        self.grad_abs_thresh = 0.0012
         self.optimizer_type = "default"
         self.mult = 0.5
         super().__init__(parser, "Optimization Parameters")

@@ -343,7 +343,7 @@ __device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const gl
 }
 
 
-__device__ void computePartialSplittingMatrix(int idx, const float3& m, const float* proj, const glm::vec3& dL_dmean, const float3& dL_dmean2D, glm::mat3* splitting_mats)
+__device__ void computePartialSplittingMatrix(int idx, const float3& m, const float* proj, const glm::vec3& dL_dmean, const float4& dL_dmean2D, glm::mat3* splitting_mats)
 {
 
 	// Taking care of gradients from the screenspace points
@@ -394,7 +394,7 @@ __global__ void preprocessCUDA(
 	const float scale_modifier,
 	const float* proj,
 	const glm::vec3* campos,
-	const float3* dL_dmean2D,
+	const float4* dL_dmean2D,
 	glm::vec3* dL_dmeans,
 	float* dL_dcolor,
 	float* dL_dcov3D,
@@ -485,7 +485,7 @@ __global__ void PerGaussianRenderCUDA(
 	const uint32_t* __restrict__ max_contrib,
 	const float* __restrict__ pixel_colors,
 	const float* __restrict__ dL_dpixels,
-	float3* __restrict__ dL_dmean2D,
+	float4* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
@@ -525,6 +525,8 @@ __global__ void PerGaussianRenderCUDA(
 
 	float dL_dmean2D_x = 0.0f;
 	float dL_dmean2D_y = 0.0f;
+	float dL_dmean2D_z = 0.0f;
+	float dL_dmean2D_w = 0.0f;
 	float dL_dconic2D_x = 0.0f;
 	float dL_dconic2D_y = 0.0f;
 	float dL_dconic2D_w = 0.0f;
@@ -608,8 +610,12 @@ __global__ void PerGaussianRenderCUDA(
 			const float dG_ddelx = -gdx * con_o.x - gdy * con_o.y;
 			const float dG_ddely = -gdy * con_o.z - gdx * con_o.y;
 
-			dL_dmean2D_x += dL_dG * dG_ddelx * ddelx_dx;
-			dL_dmean2D_y += dL_dG * dG_ddely * ddely_dy;
+			const float tmp_x = dL_dG * dG_ddelx * ddelx_dx;
+			const float tmp_y = dL_dG * dG_ddely * ddely_dy;
+			dL_dmean2D_x += tmp_x;
+			dL_dmean2D_y += tmp_y;
+			dL_dmean2D_z += fabs(tmp_x);
+			dL_dmean2D_w += fabs(tmp_y);
 			dL_dconic2D_x += -0.5f * gdx * d.x * dL_dG;
 			dL_dconic2D_y += -0.5f * gdx * d.y * dL_dG;
 			dL_dconic2D_w += -0.5f * gdy * d.y * dL_dG;
@@ -644,6 +650,8 @@ __global__ void PerGaussianRenderCUDA(
 	{
 		atomicAdd(&dL_dmean2D[gaussian_idx].x, dL_dmean2D_x);
 		atomicAdd(&dL_dmean2D[gaussian_idx].y, dL_dmean2D_y);
+		atomicAdd(&dL_dmean2D[gaussian_idx].z, dL_dmean2D_z);
+		atomicAdd(&dL_dmean2D[gaussian_idx].w, dL_dmean2D_w);
 		atomicAdd(&dL_dconic2D[gaussian_idx].x, dL_dconic2D_x);
 		atomicAdd(&dL_dconic2D[gaussian_idx].y, dL_dconic2D_y);
 		atomicAdd(&dL_dconic2D[gaussian_idx].w, dL_dconic2D_w);
@@ -671,7 +679,7 @@ void BACKWARD::preprocess(
 	const float focal_x, float focal_y,
 	const float tan_fovx, float tan_fovy,
 	const glm::vec3* campos,
-	const float3* dL_dmean2D,
+	const float4* dL_dmean2D,
 	const float* dL_dconic,
 	glm::vec3* dL_dmean3D,
 	float* dL_dcolor,
@@ -714,7 +722,7 @@ void BACKWARD::preprocess(
 		scale_modifier,
 		projmatrix,
 		campos,
-		(float3*)dL_dmean2D,
+		(float4*)dL_dmean2D,
 		(glm::vec3*)dL_dmean3D,
 		dL_dcolor,
 		dL_dcov3D,
@@ -743,7 +751,7 @@ void BACKWARD::render(
 	const uint32_t* max_contrib,
 	const float* pixel_colors,
 	const float* dL_dpixels,
-	float3* dL_dmean2D,
+	float4* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,

@@ -212,7 +212,7 @@ def training(dataset, opt, pipe, logging_intervals, testing_iterations, saving_i
                         gaussians.visualize_densify_hook = None
 
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    densify_info = gaussians.densify_and_prune(opt.densify_strategy, opt.densify_grad_threshold, opt.densify_S_threshold, 0.005, scene.cameras_extent, size_threshold)
+                    densify_info = gaussians.densify_and_prune(opt.densify_strategy, opt.densify_grad_threshold, opt.grad_abs_thresh, opt.densify_S_threshold, 0.005, scene.cameras_extent, size_threshold)
                     write_dict_log(dataset, {'iteration': iteration, **densify_info})
                     report_set.update({
                         "clone_candidate": densify_info["clone_candidate"],

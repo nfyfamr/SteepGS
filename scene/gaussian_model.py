@@ -57,6 +57,7 @@ class GaussianModel:
         self.xyz_grad_estimator = 'mean'
         self.xyz_grad_ema_ratio = 0.3
         self.xyz_gradient_accum = torch.empty(0)
+        self.xyz_gradient_accum_abs = torch.empty(0)
         # self.cov_feat_gradient_accum = torch.empty(0)
         self.S_estimator = 'partial'
         self.xyz_splitting_mat_accum = torch.empty(0)
@@ -80,6 +81,7 @@ class GaussianModel:
             self.max_radii2D,
             self.xyz_gradient_norm_accum,
             self.xyz_gradient_accum,
+            self.xyz_gradient_accum_abs,
             self.xyz_splitting_mat_accum,
             self.denom,
             self.optimizer.state_dict(),
@@ -98,6 +100,7 @@ class GaussianModel:
         self.max_radii2D, 
         xyz_gradient_norm_accum,
         xyz_gradient_accum, 
+        xyz_gradient_accum_abs,
         xyz_splitting_mat_accum, 
         denom,
         opt_dict,
@@ -106,6 +109,7 @@ class GaussianModel:
         self.training_setup(training_args)
         self.xyz_gradient_norm_accum = xyz_gradient_norm_accum
         self.xyz_gradient_accum = xyz_gradient_accum
+        self.xyz_gradient_accum_abs = xyz_gradient_accum_abs
         self.xyz_splitting_mat_accum = xyz_splitting_mat_accum
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
@@ -185,6 +189,7 @@ class GaussianModel:
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_norm_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 3), device="cuda")
+        self.xyz_gradient_accum_abs = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.xyz_splitting_mat_accum = torch.zeros((self.get_xyz.shape[0], 3, 3), device="cuda")
         
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -393,6 +398,7 @@ class GaussianModel:
         self.xyz_gradient_norm_accum = self.xyz_gradient_norm_accum[valid_points_mask]
         # self.xyz_gradient3d_norm_accum = self.xyz_gradient3d_norm_accum[valid_points_mask]
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
+        self.xyz_gradient_accum_abs = self.xyz_gradient_accum_abs[valid_points_mask]
         # self.cov_feat_gradient_accum = self.cov_feat_gradient_accum[valid_points_mask]
         self.xyz_splitting_mat_accum = self.xyz_splitting_mat_accum[valid_points_mask]
 
@@ -443,6 +449,7 @@ class GaussianModel:
 
         self.xyz_gradient_norm_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 3), device="cuda")
+        self.xyz_gradient_accum_abs = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.xyz_splitting_mat_accum = torch.zeros((self.get_xyz.shape[0], 3, 3), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
@@ -493,13 +500,16 @@ class GaussianModel:
         return int(selected_pts_mask.sum().item())
 
 
-    def densify_and_prune(self, densify_strategy, max_grad, S_threshold, min_opacity, extent, max_screen_size):
+    def densify_and_prune(self, densify_strategy, max_grad, grad_abs_thresh, S_threshold, min_opacity, extent, max_screen_size):
         total_points_before = self.get_xyz.shape[0]
 
         if 'adc' in densify_strategy:
 
             grad_norms = self.xyz_gradient_norm_accum / self.denom
             grad_norms[grad_norms.isnan()] = 0.0
+
+            grad_norms_abs = self.xyz_gradient_accum_abs / self.denom
+            grad_norms_abs[grad_norms_abs.isnan()] = 0.0
             
             if hasattr(self, 'visualize_densify_hook') and self.visualize_densify_hook is not None:
                 self.visualize_densify_hook({
@@ -513,7 +523,7 @@ class GaussianModel:
             splitting_mats[splitting_mats.isnan()] = 0.0
 
             num_clone_points = self.densify_and_clone(grad_norms, max_grad, extent)
-            num_split_points = self.densify_and_split(grad_norms, max_grad, extent)
+            num_split_points = self.densify_and_split(grad_norms_abs, grad_abs_thresh, extent)
 
             with torch.no_grad():
                 xyz_grad_norms = torch.norm(xyz_grads, dim=-1)
@@ -529,6 +539,8 @@ class GaussianModel:
 
             viewspace_grad_norms = self.xyz_gradient_norm_accum / self.denom
             viewspace_grad_norms[viewspace_grad_norms.isnan()] = 0.0
+            viewspace_grad_norms_abs = self.xyz_gradient_accum_abs / self.denom
+            viewspace_grad_norms_abs[viewspace_grad_norms_abs.isnan()] = 0.0
 
             if self.xyz_grad_estimator == 'mean':
                 grads = self.xyz_gradient_accum / self.denom
@@ -545,9 +557,11 @@ class GaussianModel:
             out_dict = self.densify_and_split_steepest(
                 densify_strategy,
                 viewspace_grad_norms, 
+                viewspace_grad_norms_abs,
                 grads,
                 splitting_mats,
                 max_grad,
+                grad_abs_thresh,
                 min_grad,
                 S_threshold,
                 extent,
@@ -598,7 +612,7 @@ class GaussianModel:
         )
 
     
-    def densify_and_split_steepest(self, options, viewspace_grad_norms, xyz_grads, splitting_mats, grad_var_threshold, grad_threshold, S_threshold, scene_extent):
+    def densify_and_split_steepest(self, options, viewspace_grad_norms, viewspace_grad_norms_abs, xyz_grads, splitting_mats, grad_var_threshold, grad_abs_threshold, grad_threshold, S_threshold, scene_extent):
 
         # set N=2 optimally
         N = 2
@@ -614,27 +628,37 @@ class GaussianModel:
         optimized_pts_mask = self.denom[..., 0] >= 1
         stationary_pts_mask = torch.logical_and(grad_norms <= grad_threshold, optimized_pts_mask)
         uncertain_pts_mask = (viewspace_grad_norms.squeeze(-1) >= grad_var_threshold)  # Basic ADC filter
+        split_grad_pts_mask = (viewspace_grad_norms_abs.squeeze(-1) >= grad_abs_threshold)
         saddle_pts_mask = torch.logical_and(stationary_pts_mask, S_eigvals < S_threshold)  # SteepGS filter
 
 
-        filters = []
-        if not 'no_uncertain' in options:
-            filters.append(uncertain_pts_mask)
+        selected_pts_mask = torch.ones_like(uncertain_pts_mask)
         if not 'no_eig_cond' in options and not 'no_saddle' in options:
-            filters.append(S_eigvals < S_threshold)
+            selected_pts_mask = torch.logical_and(selected_pts_mask, S_eigvals < S_threshold)
         if 'stationary' in options and not 'no_saddle' in options:
-            filters.append(stationary_pts_mask)
+            selected_pts_mask = torch.logical_and(selected_pts_mask, stationary_pts_mask)
+        # filters = []
+        # if not 'no_uncertain' in options:
+        #     filters.append(uncertain_pts_mask)
+        # if not 'no_eig_cond' in options and not 'no_saddle' in options:
+        #     filters.append(S_eigvals < S_threshold)
+        # if 'stationary' in options and not 'no_saddle' in options:
+        #     filters.append(stationary_pts_mask)
     
-        selected_pts_mask = filters[0]
-        for mask in filters[1:]:
-            selected_pts_mask = torch.logical_and(selected_pts_mask, mask)  # Basic ADC filter & S_eigvals < S_threshold
+        # selected_pts_mask = filters[0]
+        # for mask in filters[1:]:
+        #     selected_pts_mask = torch.logical_and(selected_pts_mask, mask)  # Basic ADC filter & S_eigvals < S_threshold
 
         if hasattr(self, 'visualize_densify_hook') and self.visualize_densify_hook is not None:
-            self.visualize_densify_hook({'selected': selected_pts_mask})
+            self.visualize_densify_hook({
+                'selected': torch.logical_or(
+                                torch.logical_and(uncertain_pts_mask, selected_pts_mask),
+                                torch.logical_and(split_grad_pts_mask, selected_pts_mask))
+            })
 
 
-        split_candidate = torch.logical_and(uncertain_pts_mask, torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
-        split_pts_mask = torch.logical_and(selected_pts_mask, torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+        split_candidate = torch.logical_and(split_grad_pts_mask, torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+        split_pts_mask = torch.logical_and(selected_pts_mask, split_candidate)
 
         if 'no_eig_upd' in options:
             stds = self.get_scaling[split_pts_mask].repeat(N,1)
@@ -660,7 +684,7 @@ class GaussianModel:
 
         
         clone_candidate = torch.logical_and(uncertain_pts_mask, torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
-        clone_pts_mask = torch.logical_and(selected_pts_mask, torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+        clone_pts_mask = torch.logical_and(selected_pts_mask, clone_candidate)
         if 'no_eig_upd' in options:
             offsets_clone = torch.zeros_like(S_eigvecs[clone_pts_mask])
         else:
@@ -705,11 +729,13 @@ class GaussianModel:
         self.prune_points(prune_filter)
 
 
+        num_clone_points = clone_pts_mask.sum().item()
+        num_split_points = split_pts_mask.sum().item()
 
         return dict(
-            num_added_points=selected_pts_mask.sum().item(),
-            num_clone_points=selected_pts_mask.sum().item() - split_pts_mask.sum().item(),
-            num_split_points=split_pts_mask.sum().item(),
+            num_added_points=num_clone_points + num_split_points,
+            num_clone_points=num_clone_points,
+            num_split_points=num_split_points,
             num_stationary_points=stationary_pts_mask.sum().item(),
             num_saddle_points=saddle_pts_mask.sum().item(),
             num_uncertain_points=uncertain_pts_mask.sum().item(),
@@ -720,6 +746,7 @@ class GaussianModel:
 
     def add_densification_stats(self, viewspace_point_tensor, splitting_mats, update_filter):
         self.xyz_gradient_norm_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
+        self.xyz_gradient_accum_abs[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter, 2:], dim=-1, keepdim=True)
         if self.xyz_grad_estimator == 'mean':
             self.xyz_gradient_accum[update_filter] += self.get_xyz.grad[update_filter]
 
